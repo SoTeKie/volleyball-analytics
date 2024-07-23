@@ -1,0 +1,62 @@
+The syntax of the statistics has to be:
+1. relatively simple
+2. easily parsable
+3. deterministic 
+4. simplifyible
+
+Initial proposal based on how different applications handle it:
+
+[team-prefix][player-number][action][action-specifier]
+
+ACTIONS:
+- Serve [S]
+- Serve receive [R]
+- Pass [P]
+- Set [E]
+- Hit [H]
+- Block [B]
+- Freeball [F]
+
+ACTION SPECIFIERS:
+- SCORING:
+	- If a point is ambigious (can happen if you use the simplest syntax), it might be necessary
+		to denote who scored a point, you can do that by suffixing who won the point by using their team-prefix :)
+- ZONES: 
+	- 1 through 6 [Or 9] and subsections [A-D]
+	- 0 -> out of bounds
+	- N -> NET (Mostly used for offensive actions)
+	- V - OVERPASS (Mostly used for devensive actions) 
+	- Can be prefixed with team-prefix on certain actions where it's ambiguous (blocking)
+- HEIGHT (Mostly used on defensive actions):
+	- L -> Low
+	- M -> Mid
+	- H -> High
+- Serve:
+	- SERVE_POSITION:
+		- A THROUGH F
+	- {SERVE_POSITION}[ZONES]
+- Serve receive:
+	- [ZONES][HEIGHT]
+- Pass:
+	- [ZONES][HEIGHT]
+- Set:
+	- QUALITY:
+		- Not sure about this one, maybe zone + speed instead?
+		- A THROUGH F
+	- [QUALITY]
+- Hit:
+	[ZONES]
+- Block:
+	- [ZONES]
+- Freeball:
+	- [ZONES]
+
+Example with team prefixes:
+Team A: !
+Team B: @
+
+# Complex example
+!7SA7D @12R3AL @4EC @8H1C !7P0L
+
+# Simplified
+!7S @12R @8H !7P0L
