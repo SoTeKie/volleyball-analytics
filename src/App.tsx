@@ -2,38 +2,54 @@ import { createSignal, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/tauri";
 import { TextField, TextFieldRoot } from "@/components/ui/textfield";
 
-type ParseResult = {
-  teamScored: "Away" | "Home";
+interface ParseResult {
+  Ok?: Stats;
+  Fail?: Reason;
 };
 
-type ParseError = {
+interface TeamStats {
+  sets: number;
+  points: number;
+}
+
+interface Stats {
+  awayTeam: TeamStats;
+  homeTeam: TeamStats;
+}
+
+interface Reason {
   key: "WhoScored" | "InvalidInput";
-  isParsingError: true
+  errorMsg: string;
 };
 
-function isParseError(error: any): error is ParseError {
-  return (error as ParseError).isParsingError === true;
+const initialStats: Stats = {
+  awayTeam: {
+    sets: 0,
+    points: 0,
+  },
+  homeTeam: {
+    sets: 0,
+    points: 0,
+  },
 }
 
 function App() {
   const [rally, setRally] = createSignal("");
-  const [rallyResult, setRallyResult] = createSignal<ParseResult | null>(null);
-  const [parsingError, setParsingError] = createSignal<ParseError | null>(null);
+  const [stats, setStats] = createSignal<Stats>(initialStats);
+  const [failReason, setFailReason] = createSignal<Reason>();
 
   const parseRally = async () => {
-    try {
-      setRallyResult(await invoke("parse_rally", { rally: rally() }));
-      setParsingError(null);
-    } catch (e) {
-      console.log(e);
-      if (isParseError(e)) {
-        setRallyResult(null);
-        setParsingError(e);
-        return;
-      }
-      
-      throw e;
+    const result = await invoke<ParseResult>(
+      "parse_rally",
+      { currentStats: stats(), rally: rally() }
+    );
+
+    console.log(result);
+
+    if (result.Ok !== undefined) {
+      setStats(result.Ok);
     }
+    setFailReason(result.Fail);
   }
 
   const handleSubmit = (e: KeyboardEvent) => {
@@ -43,20 +59,25 @@ function App() {
   }
 
   return (
-    <div>
-      <h1 class="text-2xl">Welcome to Volleyball Analytics!</h1>
+    <div class="flex flex-col items-center justify-center h-dvh gap-4">
+      <h1 class="text-xl">Welcome to Volleyball Analytics!</h1>
+      <div class="flex flex-row gap-4">
+        <span class="rounded p-1 text-xl bg-gray-900 text-white">{stats().homeTeam.sets}</span>
+        <span class="rounded p-1 text-xl bg-red-600 text-white">{stats().homeTeam.points}</span>
+        <span class="rounded p-1 text-xl">-</span>
+        <span class="rounded p-1 text-xl bg-red-600 text-white">{stats().awayTeam.points}</span>
+        <span class="rounded p-1 text-xl bg-gray-900 text-white">{stats().awayTeam.sets}</span>
+      </div>
       <TextFieldRoot
         value={rally()}
         onChange={setRally}
         onKeyPress={handleSubmit}
+        class="w-3/6"
       >
         <TextField />
       </TextFieldRoot>
-      <Show when={parsingError() !== null}>
-        <p>{parsingError()?.key}</p>
-      </Show>
-      <Show when={rallyResult() !== null}>
-        <p>{rallyResult()?.teamScored}</p>
+      <Show when={failReason()}>
+        {(r) => <p class="text-destructive">{r().errorMsg}</p>}
       </Show>
     </div>
   );
