@@ -3,6 +3,7 @@
 
 mod parser;
 
+#[derive(Clone, Copy)]
 struct Config {
     away_prefix: char,
     home_prefix: char,
