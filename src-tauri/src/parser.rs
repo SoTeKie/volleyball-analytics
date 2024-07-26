@@ -1,14 +1,9 @@
-use std::string::ParseError;
-
-use serde::{Deserialize, Serialize};
-
+use crate::match_state::{Team, UpdateMatchState};
 use crate::Config;
+use serde::Serialize;
 
-#[derive(Serialize, Clone, Copy)]
-enum Team {
-    Away,
-    Home,
-}
+use chumsky::prelude::*;
+use text::TextParser;
 
 impl Team {
     pub fn from_prefix(config: Config, prefix: char) -> Option<Team> {
@@ -60,70 +55,6 @@ impl Reason {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone, Copy)]
-#[serde(rename_all = "camelCase")]
-struct TeamStats {
-    sets: u8,
-    points: u8,
-}
-
-impl TeamStats {
-    fn add_point(&mut self) {
-        self.points += 1;
-    }
-}
-
-#[derive(Deserialize, Serialize, Clone, Copy)]
-#[serde(rename_all = "camelCase")]
-pub struct Stats {
-    away_team: TeamStats,
-    home_team: TeamStats,
-}
-
-impl Stats {
-    fn get_set_winner(self) -> Option<Team> {
-        let (winning_team, losing_team, team) = if self.away_team.points > self.home_team.points {
-            (self.away_team, self.home_team, Team::Away)
-        } else {
-            (self.home_team, self.away_team, Team::Home)
-        };
-
-        let set_point_cieling = match winning_team.sets + losing_team.sets == 5 {
-            true => 15,
-            false => 25,
-        };
-
-        match (winning_team.points, losing_team.points) {
-            (wp, lp) if wp >= set_point_cieling && wp - lp > 1 => Some(team),
-            (_, _) => None,
-        }
-    }
-
-    fn add_point(&mut self, point_to: Team) -> () {
-        match point_to {
-            Team::Away => self.away_team.add_point(),
-            Team::Home => self.home_team.add_point(),
-        };
-
-        self.get_set_winner().into_iter().for_each(|t| match t {
-            Team::Away => {
-                self.away_team.points = 0;
-                self.away_team.sets += 1;
-            }
-            Team::Home => {
-                self.home_team.points = 0;
-                self.home_team.sets += 1;
-            }
-        });
-    }
-}
-
-#[derive(Serialize)]
-pub enum ParsingResult {
-    Ok(Stats),
-    Fail(Reason),
-}
-
 enum ServePosition {
     A,
     B,
@@ -152,69 +83,63 @@ struct Serve {
     zone: Option<Zone>,
 }
 
-enum Action {
-    Serve(Serve),
-    Receive,
-    Pass,
-    Set,
-    Hit,
-    Block,
-    Freeball,
+enum Height {
+    Low,
+    Mid,
+    High,
 }
 
-fn parse_action(config: Config, action: &str) -> Result<Action, Reason> {
-    let team = action.chars()
-        .nth(0)
-        .and_then(|prefix| Team::from_prefix(config, prefix))
-        .ok_or(Reason::missing_team_prefix())?;
+type Player = u8;
 
-    let first_digit = action.chars()
-        .nth(1)
-        .and_then(|c| c.to_digit(10))
-        .ok_or(Reason::invalid_input())?;
+struct Action {
+    team: Team,
+    player: Player,
+    action_type: Option<ActionType>,
+}
 
-    let player = action.chars()
-        .nth(2)
-        .and_then(|c| c.to_digit(10))
-        .map(|second_digit| first_digit * 10 + second_digit)
-        .unwrap_or(first_digit) as u8;
+enum ActionType {
+    Serve(Option<ServePosition>, Option<Zone>),
+    Receive(Option<Zone>, Option<Height>),
+    Pass(Option<Zone>, Option<Height>),
+    Set,
+    Hit(Option<Zone>),
+    Block,
+    Freeball(Option<Zone>),
+}
 
-    let action_type_idx = if player > 9 { 3 } else { 2 };
-    let action_type = action.chars().nth(action_type_idx).ok_or(Reason::invalid_input())?;
+fn parser(config: Config) -> impl Parser<char, Vec<Action>, Error = Simple<char>> {
+    let team_prefix = just(config.away_prefix)
+        .to(Team::Away)
+        .or(just(config.home_prefix).to(Team::Home));
 
-    match action_type {
-        'S' => Ok(Action::Serve(Serve {
+    let player = filter(|c: &char| c.is_ascii_digit())
+        .repeated()
+        .at_least(1)
+        .at_most(2)
+        .map(|cs| {
+            cs.into_iter()
+                .collect::<String>()
+                .parse::<Player>()
+                .unwrap()
+        });
+
+    let action = team_prefix
+        .then(player)
+        .padded()
+        .map(|(team, player)| Action {
             team,
             player,
-            serve_pos: None,
-            zone: None,
-        })),
-        'R' => Ok(Action::Receive),
-        'P' => Ok(Action::Pass),
-        'E' => Ok(Action::Set),
-        'H' => Ok(Action::Hit),
-        'B' => Ok(Action::Block),
-        'F' => Ok(Action::Freeball),
-        _ => Err(Reason::invalid_input()),
-    }
+            action_type: None,
+        });
+
+    action.repeated().at_least(1).then_ignore(end())
 }
 
-pub fn parse(config: Config, current_stats: &mut Stats, rally: &str) -> ParsingResult {
-    let actions: Result<Vec<Action>, Reason> = rally
-        .split(' ')
-        .map(|a| parse_action(config, a))
-        .collect();
-
-    match actions {
-        Ok(actions) => {
-            match actions.last() {
-                Some(Action::Serve(serve)) =>  {
-                    current_stats.add_point(serve.team);
-                    ParsingResult::Ok(*current_stats)
-                }
-                _ => ParsingResult::Fail(Reason::invalid_input())
-            }
-        },
-        Err(reason) => ParsingResult::Fail(reason),
-    }
+pub fn parse(config: Config, rally: &str) -> Result<UpdateMatchState, Vec<Simple<char>>> {
+    parser(config).parse(rally).and_then(|actions| {
+        actions
+            .last()
+            .map(|a| UpdateMatchState { point_to: a.team })
+            .ok_or(vec![Simple::custom(0..0, "???")])
+    })
 }
