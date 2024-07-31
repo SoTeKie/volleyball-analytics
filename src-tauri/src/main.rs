@@ -1,11 +1,12 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use parser::Reason;
+use match_state::UpdateMatchState;
 use serde::Serialize;
 
-mod parser;
 mod match_state;
+mod parser;
+mod utils;
 
 #[derive(Clone, Copy)]
 struct Config {
@@ -16,7 +17,7 @@ struct Config {
 #[derive(Serialize)]
 enum ParseRallyResult {
     Ok(match_state::MatchState),
-    Fail(parser::Reason),
+    Fail(parser::error::Reason),
 }
 
 #[tauri::command]
@@ -26,12 +27,12 @@ fn parse_rally(rally: &str, current_stats: match_state::MatchState) -> ParseRall
         home_prefix: '!',
     };
 
-    match parser::parse(config, rally) {
+    let update_state =
+        parser::parser::parse(config, rally).map(|actions| UpdateMatchState::new(actions));
+
+    match update_state {
         Ok(update) => ParseRallyResult::Ok(current_stats.update(update)),
-        Err(chumsky_msg) => {
-            println!("Real error: {:?}", chumsky_msg);
-            ParseRallyResult::Fail(Reason::invalid_input())
-        },
+        Err(reasons) => ParseRallyResult::Fail(reasons),
     }
 }
 
