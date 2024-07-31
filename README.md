@@ -1,7 +1,10 @@
-# Tauri + Solid + Typescript
+# Volleyball analytics
 
-This template should help get you started developing with Tauri, Solid and Typescript in Vite.
+This repository is an active work in progress and still not close to completion.
 
-## Recommended IDE Setup
+My end goals for this project are:
+1. An open-source and easily usable volleyball analytics program for various leagues that don't have the money
+to cash out on more expensive solutions.
+2. A well-built code-base that would showcase the strengths of tauri and solidJS :)
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+I'm not at this time making any promises on when and if I will reach those end goals.
