@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::parser::error::Reason;
 use crate::parser::parser::{Action, ActionType};
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Hash)]

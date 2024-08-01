@@ -115,6 +115,15 @@ pub enum Zone {
 }
 
 impl Zone {
+    fn in_court(self) -> bool {
+        match self {
+            Zone::Overpass => false,
+            Zone::OutOfBounds => false,
+            Zone::Net => false,
+            _ => true,
+        }
+    }
+
     fn from_chars(zone: char, sub_zone: Option<char>) -> Result<Zone, Reason> {
         let sub_zone = sub_zone.map(|s| SubZone::from_char(s)).transpose()?;
 
@@ -159,7 +168,6 @@ pub struct Action {
     pub team: Team,
     pub player: Player,
     pub action_type: ActionType,
-    pub point_to: Option<Team>,
 }
 
 #[derive(Clone, Copy)]
@@ -171,6 +179,69 @@ pub enum ActionType {
     Hit(Option<Zone>),
     Block(Team, Option<Zone>),
     Freeball(Option<Zone>),
+}
+
+#[derive(Clone, Copy)]
+pub struct Scored {
+    player: Player,
+    action_type: ActionType,
+}
+
+#[derive(Clone, Copy)]
+pub struct WhoScored {
+    pub scored: Option<Scored>,
+    pub faulted: Option<Scored>,
+    point_to: Team,
+}
+
+impl WhoScored {
+    fn new_fault(player: Player, action_type: ActionType, point_to: Team) -> Self {
+        Self {
+            scored: None,
+            faulted: Some(Scored {
+                player,
+                action_type,
+            }),
+            point_to,
+        }
+    }
+
+    fn new_scored(player: Player, action_type: ActionType, point_to: Team) -> Self {
+        Self {
+            scored: Some(Scored {
+                player,
+                action_type,
+            }),
+            faulted: None,
+            point_to,
+        }
+    }
+
+    fn new(
+        scored_player: Player,
+        scored_action_type: ActionType,
+        faulted_player: Player,
+        faulted_action_type: ActionType,
+        point_to: Team,
+    ) -> Self {
+        Self {
+            scored: Some(Scored {
+                player: scored_player,
+                action_type: scored_action_type,
+            }),
+            faulted: Some(Scored {
+                player: faulted_player,
+                action_type: faulted_action_type,
+            }),
+            point_to,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Rally {
+    pub actions: Vec<Action>,
+    pub who: WhoScored,
 }
 
 impl ActionType {
@@ -199,30 +270,76 @@ impl ActionType {
             })
     }
 
-    fn who_scored_point(action_type: ActionType, team: Team) -> Result<Team, Reason> {
-        match action_type {
-            ActionType::Serve(_, Some(Zone::OutOfBounds | Zone::Net)) => Ok(team.get_opponent()),
-            ActionType::Serve(_, Some(_)) => Ok(team),
-            ActionType::Serve(_, None) => Err(Reason::who_scored()),
+    fn who_scored_point(action: Action, related_action: Option<Action>) -> WhoScored {
+        let player_faulted = WhoScored::new_fault(
+            action.player,
+            action.action_type,
+            action.team.get_opponent(),
+        );
 
-            ActionType::Receive(_, Some(Zone::Overpass)) => Ok(team),
-            ActionType::Receive(_, _) => Ok(team.get_opponent()),
+        let player_scored = WhoScored::new_scored(
+            action.player,
+            action.action_type,
+            action.team.get_opponent(),
+        );
 
-            ActionType::Pass(_, Some(Zone::Overpass)) => Ok(team),
-            ActionType::Pass(_, _) => Ok(team.get_opponent()),
+        let related_faulted = |related_action: Action| {
+            WhoScored::new(
+                action.player,
+                action.action_type,
+                related_action.player,
+                related_action.action_type,
+                action.team,
+            )
+        };
+
+        let related_scored = |related_action: Action| {
+            WhoScored::new(
+                related_action.player,
+                related_action.action_type,
+                action.player,
+                action.action_type,
+                related_action.team,
+            )
+        };
+
+        match action.action_type {
+            ActionType::Serve(_, Some(Zone::OutOfBounds | Zone::Net)) => player_faulted,
+            ActionType::Serve(_, _) => player_scored,
+
+            ActionType::Receive(_, Some(Zone::Overpass)) => player_scored,
+            ActionType::Receive(_, _) => match related_action {
+                None => player_faulted,
+                Some(related) => related_scored(related)
+            },
+
+            ActionType::Pass(_, Some(Zone::Overpass)) => player_scored,
+            ActionType::Pass(_, _) => match related_action {
+                None => player_faulted,
+                Some(related) => related_scored(related)
+            },
 
             // TODO: Add more info to sets (zone?) to be able to tell who scored instead
             // of assuming setter fault on last action (might be an over-set)
-            ActionType::Set => Ok(team.get_opponent()),
+            ActionType::Set => player_faulted,
 
-            ActionType::Hit(Some(Zone::OutOfBounds | Zone::Net)) => Ok(team.get_opponent()),
-            ActionType::Hit(_) => Ok(team),
+            ActionType::Hit(Some(Zone::OutOfBounds | Zone::Net)) => player_faulted,
+            ActionType::Hit(_) => player_scored,
+            ActionType::Block(t, zone)
+                if t != action.team && zone.map_or(true, |z| z.in_court()) =>
+            {
+                match related_action {
+                    Some(related) => related_faulted(related),
+                    None => player_scored,
+                }
+            }
+            ActionType::Block(_, _) => match related_action {
+                Some(related) => related_scored(related),
+                None => player_faulted,
+            },
 
-            ActionType::Block(t, Some(Zone::Net | Zone::OutOfBounds)) => Ok(t),
-            ActionType::Block(t, _) => Ok(t.get_opponent()),
-
-            ActionType::Freeball(Some(Zone::OutOfBounds | Zone::Net)) => Ok(team.get_opponent()),
-            ActionType::Freeball(_) => Ok(team),
+            ActionType::Freeball(Some(Zone::OutOfBounds | Zone::Net)) => player_faulted,
+            ActionType::Freeball(_) => player_scored,
         }
     }
 
@@ -308,7 +425,7 @@ impl ActionType {
     }
 }
 
-fn parse_action(config: Config, action: &str, position: Position) -> Result<Action, Reason> {
+fn parse_action(config: Config, action: &str, is_first: bool) -> Result<Action, Reason> {
     let mut chars = action.chars().peekable();
 
     let team = chars
@@ -318,31 +435,32 @@ fn parse_action(config: Config, action: &str, position: Position) -> Result<Acti
 
     let player = Player::parse(&mut chars)?;
 
-    let action_type = match position {
-        Position::First | Position::Only => ActionType::parse_first(&mut chars)?,
-        _ => ActionType::parse_inner(config, &mut chars)?
-    };
-
-    let point_to = match position {
-        Position::Last | Position::Only => Some(ActionType::who_scored_point(action_type, team)?),
-        _ => None
+    let action_type = match is_first {
+        true => ActionType::parse_first(&mut chars)?,
+        false => ActionType::parse_inner(config, &mut chars)?,
     };
 
     Ok(Action {
         team,
         player,
         action_type,
-        point_to
     })
 }
 
-pub fn parse(config: Config, rally: &str) -> Result<Vec<Action>, Reason> {
-    rally
+pub fn parse(config: Config, rally: &str) -> Result<Rally, Reason> {
+    let actions: Result<Vec<Action>, Reason> = rally
         .split(" ")
         .enumerate()
-        .with_position()
-        .map(|(pos, (idx, action))| {
-            parse_action(config.clone(), action, pos).map_err(|e| e.with_location(idx))
+        .map(|(idx, action)| {
+            parse_action(config.clone(), action, idx == 0).map_err(|e| e.with_location(idx))
         })
-        .collect()
+        .collect();
+
+    actions.and_then(|a| {
+        let mut reversed = a.clone().into_iter().rev();
+        let (last_action, related_action) = (reversed.next().ok_or(Reason::invalid_input())?, reversed.next());
+        let who_scored = ActionType::who_scored_point(last_action, related_action);
+
+        Ok(Rally { actions: a, who: who_scored })
+    })
 }
